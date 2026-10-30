@@ -1,0 +1,78 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake pkg-config libasound2-dev libjack-jackd2-dev \
+            libfreetype-dev libfontconfig1-dev libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
+            libxinerama-dev libxrandr-dev libxrender-dev libglu1-mesa-dev mesa-common-dev
+
+      - name: Configure (macOS, universal binary)
+        if: runner.os == 'macOS'
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DDM_COPY_AFTER_BUILD=OFF -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+
+      - name: Configure
+        if: runner.os != 'macOS'
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DDM_COPY_AFTER_BUILD=OFF
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Package VST3
+        shell: bash
+        working-directory: build/DoctorMigrana_artefacts/Release/VST3
+        run: cmake -E tar cf "../../../../DoctorMigrana-RockON-3in1-VST3-${{ runner.os }}.zip" --format=zip ./*.vst3
+
+      - name: Package standalone
+        shell: bash
+        working-directory: build/DoctorMigrana_artefacts/Release/Standalone
+        run: cmake -E tar cf "../../../../DoctorMigrana-RockON-3in1-Standalone-${{ runner.os }}.zip" --format=zip .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DoctorMigrana-RockON-3in1-${{ runner.os }}
+          path: DoctorMigrana-RockON-3in1-*-${{ runner.os }}.zip
+
+  release:
+    name: Publish release (tags v*)
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.zip
+          generate_release_notes: true
+          body: |
+            VST3 and standalone builds for Linux, Windows and macOS (universal).
+            Unsigned builds: on macOS run `xattr -cr` on the downloaded plugin; on Windows use "Run anyway" in SmartScreen.
+            See README.md for installation. GUI images were created with Meta AI (credit: Meta AI; non-commercial use of the artwork) except the Doctor Migraña logo, which is the property of GuitarFros - see LICENSE-ARTWORK.md and CREDITS.md.
